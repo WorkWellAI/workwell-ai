@@ -212,7 +212,7 @@ export function PostureMonitor() {
           neckAngle: metrics.neckAngle,
         });
 
-        const ctx = canvas.getContext("2d");
+        const ctx = canvas.getContext("2d", { alpha: true });
         if (ctx) {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           const color = statusColor(next, fatigueSnap, HOLD_MS);
