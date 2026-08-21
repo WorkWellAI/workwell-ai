@@ -11,7 +11,21 @@ import {
   type Landmark,
   type SessionSnapshot,
 } from "@/lib/posture";
-import { createPoseLandmarker, type PoseLandmarkerHandle } from "@/lib/pose-landmarker";
+import {
+  createFaceLandmarker,
+  createPoseLandmarker,
+  type FaceLandmarkerHandle,
+  type PoseLandmarkerHandle,
+} from "@/lib/pose-landmarker";
+import {
+  analyzeFace,
+  EYES_HOLD_MS,
+  FACE_DOTS,
+  FATIGUE_COPY,
+  FatigueSession,
+  YAWN_HOLD_MS,
+  type FatigueSnapshot,
+} from "@/lib/fatigue";
 import {
   cameraLabel,
   listVideoInputs,
@@ -61,13 +75,39 @@ function drawPose(
 
 const HOLD_MS = 7_000;
 
-function statusColor(snapshot: SessionSnapshot | null, holdMs: number) {
+function statusColor(
+  snapshot: SessionSnapshot | null,
+  fatigue: FatigueSnapshot | null,
+  holdMs: number,
+) {
   if (!snapshot?.metrics.present) return "#7d8b84";
-  if (snapshot.alert) return "#ff6b4a";
-  if (snapshot.headHoldMs > holdMs * 0.4 || snapshot.shoulderHoldMs > holdMs * 0.4) {
+  if (snapshot.alert || fatigue?.alert) return "#ff6b4a";
+  if (
+    snapshot.headHoldMs > holdMs * 0.4 ||
+    snapshot.shoulderHoldMs > holdMs * 0.4 ||
+    (fatigue &&
+      (fatigue.eyesHoldMs > EYES_HOLD_MS * 0.4 ||
+        fatigue.yawnHoldMs > YAWN_HOLD_MS * 0.4))
+  ) {
     return "#f0b429";
   }
   return "#b7e38a";
+}
+
+function drawFaceDots(
+  ctx: CanvasRenderingContext2D,
+  landmarks: Landmark[],
+  color: string,
+) {
+  const { width, height } = ctx.canvas;
+  ctx.fillStyle = color;
+  for (const i of FACE_DOTS) {
+    const p = landmarks[i];
+    if (!p) continue;
+    ctx.beginPath();
+    ctx.arc(p.x * width, p.y * height, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 export function PostureMonitor() {
@@ -78,6 +118,8 @@ export function PostureMonitor() {
   const lastTsRef = useRef(-1);
   const lastUiRef = useRef(0);
   const landmarkerRef = useRef<PoseLandmarkerHandle | null>(null);
+  const faceLandmarkerRef = useRef<FaceLandmarkerHandle | null>(null);
+  const fatigueRef = useRef(new FatigueSession());
   const loopStartedRef = useRef(false);
   const deviceIdRef = useRef("");
 
@@ -92,6 +134,8 @@ export function PostureMonitor() {
   const [deviceId, setDeviceId] = useState("");
   const [mirrored, setMirrored] = useState(true);
   const [switching, setSwitching] = useState(false);
+  const [fatigue, setFatigue] = useState<FatigueSnapshot | null>(null);
+  const [faceReady, setFaceReady] = useState(false);
 
   const stopTracks = useCallback(() => {
     const stream = videoRef.current?.srcObject as MediaStream | null;
@@ -124,25 +168,46 @@ export function PostureMonitor() {
         const landmarks = result.landmarks[0] ?? [];
         const metrics = analyzePosture(landmarks);
         const next = sessionRef.current.step(metrics);
-        setCalibrating(sessionRef.current.isCalibrating);
+        setCalibrating(
+          sessionRef.current.isCalibrating || fatigueRef.current.isCalibrating,
+        );
+
+        let faceLandmarks: Landmark[] = [];
+        let fatigueSnap: FatigueSnapshot | null = null;
+        const faceLm = faceLandmarkerRef.current;
+        if (faceLm) {
+          try {
+            const face = faceLm.detectForVideo(v, ts);
+            faceLandmarks = face.faceLandmarks[0] ?? [];
+            const faceMetrics = analyzeFace(
+              faceLandmarks,
+              face.faceBlendshapes?.[0]?.categories,
+            );
+            fatigueSnap = fatigueRef.current.step(faceMetrics);
+          } catch {
+            // Face model may skip a frame independently of pose.
+          }
+        }
 
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
-          if (landmarks.length) {
-            drawPose(ctx, landmarks, statusColor(next, HOLD_MS));
-          }
+          const color = statusColor(next, fatigueSnap, HOLD_MS);
+          if (landmarks.length) drawPose(ctx, landmarks, color);
+          if (faceLandmarks.length) drawFaceDots(ctx, faceLandmarks, color);
         }
 
         const now = Date.now();
         if (now - lastUiRef.current > 120) {
           lastUiRef.current = now;
           setSnapshot({ ...next });
+          setFatigue(fatigueSnap ? { ...fatigueSnap } : null);
         }
 
-        if (next.alert) {
-          setBanner(next.alert);
-          setAlerts((prev) => [next.alert!, ...prev].slice(0, 8));
+        const alert = fatigueSnap?.alert ?? next.alert;
+        if (alert) {
+          setBanner(alert);
+          setAlerts((prev) => [alert, ...prev].slice(0, 8));
         }
       } catch {
         // Skip a dropped frame (timestamp or WASM hiccup).
@@ -180,6 +245,7 @@ export function PostureMonitor() {
     stopTracks();
     setRunState("idle");
     setSnapshot(null);
+    setFatigue(null);
     setCalibrating(false);
     setSwitching(false);
   }, [stopTracks]);
@@ -189,11 +255,22 @@ export function PostureMonitor() {
     setRunState("loading");
     sessionRef.current = new PostureSession();
     sessionRef.current.sitLimitMs = sitPreset;
+    fatigueRef.current = new FatigueSession();
 
     try {
       await attachStream(deviceIdRef.current || undefined);
       if (!landmarkerRef.current) {
         landmarkerRef.current = await createPoseLandmarker();
+      }
+      if (!faceLandmarkerRef.current) {
+        try {
+          faceLandmarkerRef.current = await createFaceLandmarker();
+          setFaceReady(true);
+        } catch {
+          setFaceReady(false);
+        }
+      } else {
+        setFaceReady(true);
       }
       startLoop();
       setRunState("running");
@@ -251,6 +328,8 @@ export function PostureMonitor() {
       stream?.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close();
       landmarkerRef.current = null;
+      faceLandmarkerRef.current?.close();
+      faceLandmarkerRef.current = null;
     };
   }, []);
 
@@ -271,6 +350,14 @@ export function PostureMonitor() {
     ((snapshot?.shoulderHoldMs ?? 0) / HOLD_MS) * 100,
   );
   const sitPct = Math.min(100, ((snapshot?.sittingMs ?? 0) / sitPreset) * 100);
+  const eyesPct = Math.min(
+    100,
+    ((fatigue?.eyesHoldMs ?? 0) / EYES_HOLD_MS) * 100,
+  );
+  const yawnPct = Math.min(
+    100,
+    ((fatigue?.yawnHoldMs ?? 0) / YAWN_HOLD_MS) * 100,
+  );
 
   return (
     <div className="monitor">
@@ -292,12 +379,12 @@ export function PostureMonitor() {
                   <p className="kicker">Camera local · không gửi video</p>
                   <h2>Bật webcam để theo dõi dáng ngồi</h2>
                   <p>
-                    MediaPipe Pose chạy ngay trên trình duyệt. Cảnh báo khi cúi
-                    đầu, vai lệch, hoặc ngồi quá lâu.
+                    MediaPipe chạy trên trình duyệt. Cảnh báo dáng ngồi và dấu
+                    hiệu mệt (mắt nhắm, ngáp).
                   </p>
                 </>
               )}
-              {runState === "loading" && <p>Đang tải mô hình pose…</p>}
+              {runState === "loading" && <p>Đang tải mô hình pose &amp; mặt…</p>}
               {runState === "denied" && <p>{errorMsg}</p>}
               {runState === "error" && <p>{errorMsg}</p>}
             </div>
@@ -318,7 +405,9 @@ export function PostureMonitor() {
             </button>
           )}
           {calibrating && (
-            <div className="calib-banner">Ngồi thẳng, nhìn màn hình — đang lấy tư thế chuẩn…</div>
+            <div className="calib-banner">
+              Ngồi thẳng, mắt mở, nhìn màn hình — đang lấy tư thế &amp; mắt chuẩn…
+            </div>
           )}
         </div>
 
@@ -339,7 +428,10 @@ export function PostureMonitor() {
           <button
             className="btn"
             disabled={runState !== "running"}
-            onClick={() => sessionRef.current.startCalibration()}
+            onClick={() => {
+              sessionRef.current.startCalibration();
+              fatigueRef.current.startCalibration();
+            }}
           >
             Hiệu chỉnh tư thế chuẩn
           </button>
@@ -380,9 +472,9 @@ export function PostureMonitor() {
       <aside className="panel">
         <h2>Tín hiệu tư thế</h2>
         <p className="muted">
-          {snapshot?.calibrated
-            ? "Đã hiệu chỉnh theo tư thế chuẩn của bạn."
-            : "Chưa hiệu chỉnh — dùng ngưỡng mặc định. Nên bấm hiệu chỉnh khi ngồi thẳng."}
+          {snapshot?.calibrated || fatigue?.calibrated
+            ? "Đã hiệu chỉnh tư thế / mắt. Cảnh báo mệt khi nhắm mắt ~2 giây hoặc ngáp."
+            : "Chưa hiệu chỉnh — dùng ngưỡng mặc định. Nên bấm hiệu chỉnh khi ngồi thẳng, mắt mở."}
         </p>
 
         <Metric
@@ -414,6 +506,32 @@ export function PostureMonitor() {
           pct={sitPct}
           warn={sitPct > 70}
         />
+        <Metric
+          label="Mắt (mệt)"
+          hint={FATIGUE_COPY.eyes.hint}
+          value={
+            !faceReady
+              ? "chưa tải model mặt"
+              : fatigue?.metrics.present
+                ? fatigue.metrics.blink >= 0
+                  ? `nhắm ${(fatigue.metrics.blink * 100).toFixed(0)}%`
+                  : `EAR ${fatigue.metrics.ear.toFixed(2)}`
+                : "—"
+          }
+          pct={eyesPct}
+          warn={eyesPct > 40}
+        />
+        <Metric
+          label="Ngáp"
+          hint={FATIGUE_COPY.yawn.hint}
+          value={
+            fatigue?.metrics.present
+              ? `há miệng ${fatigue.metrics.mar.toFixed(2)}`
+              : "—"
+          }
+          pct={yawnPct}
+          warn={yawnPct > 40}
+        />
 
         <label className="field">
           Cảnh báo ngồi quá lâu
@@ -431,7 +549,7 @@ export function PostureMonitor() {
 
         <h3>Cảnh báo gần đây</h3>
         {alerts.length === 0 ? (
-          <p className="muted">Chưa có cảnh báo. Giữ tư thế khoảng 7 giây khi sai mới báo, tránh spam.</p>
+          <p className="muted">Chưa có cảnh báo. Cúi/vai ~7 giây; mắt nhắm ~2 giây; ngáp ~1 giây.</p>
         ) : (
           <ul className="log">
             {alerts.map((a) => (

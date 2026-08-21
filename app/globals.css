@@ -353,6 +353,12 @@ body {
   border-color: rgba(198, 232, 122, 0.45);
 }
 
+.toast-eyes,
+.toast-yawn {
+  background: #121a2c;
+  border-color: rgba(130, 170, 255, 0.5);
+}
+
 .footnote {
   margin-top: 18px;
   color: var(--muted);

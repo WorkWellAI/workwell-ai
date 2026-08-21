@@ -2,14 +2,29 @@ import type { Landmark } from "./posture";
 
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm";
-const MODEL_URL =
+const POSE_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const FACE_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
 export type PoseLandmarkerHandle = {
   detectForVideo: (
     video: HTMLVideoElement,
     timestamp: number,
   ) => { landmarks: Landmark[][] };
+  close: () => void;
+};
+
+export type FaceLandmarkerHandle = {
+  detectForVideo: (
+    video: HTMLVideoElement,
+    timestamp: number,
+  ) => {
+    faceLandmarks: Landmark[][];
+    faceBlendshapes?: Array<{
+      categories: Array<{ categoryName: string; score: number }>;
+    }>;
+  };
   close: () => void;
 };
 
@@ -23,7 +38,15 @@ type VisionBridge = {
       options: Record<string, unknown>,
     ) => Promise<PoseLandmarkerHandle>;
   };
+  FaceLandmarker: {
+    createFromOptions: (
+      fileset: unknown,
+      options: Record<string, unknown>,
+    ) => Promise<FaceLandmarkerHandle>;
+  };
 };
+
+let filesetPromise: Promise<unknown> | null = null;
 
 async function loadBridge(): Promise<VisionBridge> {
   const url = `${window.location.origin}/mediapipe-bridge.js`;
@@ -34,10 +57,27 @@ async function loadBridge(): Promise<VisionBridge> {
   return dynamicImport(url);
 }
 
-export async function createPoseLandmarker(): Promise<PoseLandmarkerHandle> {
-  const { FilesetResolver, PoseLandmarker } = await loadBridge();
+async function getFileset() {
+  if (!filesetPromise) {
+    const { FilesetResolver } = await loadBridge();
+    filesetPromise = FilesetResolver.forVisionTasks(WASM_URL);
+  }
+  return filesetPromise;
+}
 
-  const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+async function withDelegate<T>(
+  create: (delegate: "GPU" | "CPU") => Promise<T>,
+): Promise<T> {
+  try {
+    return await create("GPU");
+  } catch {
+    return create("CPU");
+  }
+}
+
+export async function createPoseLandmarker(): Promise<PoseLandmarkerHandle> {
+  const { PoseLandmarker } = await loadBridge();
+  const fileset = await getFileset();
   const base = {
     runningMode: "VIDEO",
     numPoses: 1,
@@ -45,16 +85,26 @@ export async function createPoseLandmarker(): Promise<PoseLandmarkerHandle> {
     minPosePresenceConfidence: 0.5,
     minTrackingConfidence: 0.5,
   };
+  return withDelegate((delegate) =>
+    PoseLandmarker.createFromOptions(fileset, {
+      ...base,
+      baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate },
+    }),
+  );
+}
 
-  try {
-    return await PoseLandmarker.createFromOptions(fileset, {
+export async function createFaceLandmarker(): Promise<FaceLandmarkerHandle> {
+  const { FaceLandmarker } = await loadBridge();
+  const fileset = await getFileset();
+  const base = {
+    runningMode: "VIDEO",
+    numFaces: 1,
+    outputFaceBlendshapes: true,
+  };
+  return withDelegate((delegate) =>
+    FaceLandmarker.createFromOptions(fileset, {
       ...base,
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
-    });
-  } catch {
-    return PoseLandmarker.createFromOptions(fileset, {
-      ...base,
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-    });
-  }
+      baseOptions: { modelAssetPath: FACE_MODEL_URL, delegate },
+    }),
+  );
 }

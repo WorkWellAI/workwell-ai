@@ -28,7 +28,7 @@ export type PostureMetrics = {
   hipsVisible: boolean;
 };
 
-export type AlertKind = "head" | "shoulder" | "sit";
+export type AlertKind = "head" | "shoulder" | "sit" | "eyes" | "yawn";
 
 export type AlertEvent = {
   kind: AlertKind;
@@ -118,7 +118,10 @@ export function analyzePosture(landmarks: Landmark[]): PostureMetrics {
   return { present, headDrop, neckAngle, shoulderTilt, torsoLean, hipsVisible };
 }
 
-export const COPY: Record<AlertKind, { title: string; hint: string }> = {
+export const COPY: Record<
+  Extract<AlertKind, "head" | "shoulder" | "sit">,
+  { title: string; hint: string }
+> = {
   head: {
     title: "Đầu đang cúi về phía trước",
     hint: "Nâng màn hình lên, kéo cằm nhẹ ra sau, tai thẳng hàng với vai.",
@@ -149,7 +152,7 @@ export class PostureSession {
   private shoulderBadSince: number | null = null;
   private presentSince: number | null = null;
   private lastPresentAt: number | null = null;
-  private lastAlertAt: Record<AlertKind, number> = {
+  private lastAlertAt: Record<Extract<AlertKind, "head" | "shoulder" | "sit">, number> = {
     head: 0,
     shoulder: 0,
     sit: 0,
@@ -256,7 +259,10 @@ export class PostureSession {
     return m.shoulderTilt > 0.16;
   }
 
-  private tryAlert(kind: AlertKind, now: number): AlertEvent | null {
+  private tryAlert(
+    kind: Extract<AlertKind, "head" | "shoulder" | "sit">,
+    now: number,
+  ): AlertEvent | null {
     if (now - this.lastAlertAt[kind] < this.cooldownMs) return null;
     this.lastAlertAt[kind] = now;
     if (kind === "head") this.headBadSince = null;

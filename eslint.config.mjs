@@ -22,6 +22,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "public/mediapipe-bridge.js",
     "lib/posture.check.ts",
+    "lib/fatigue.check.ts",
   ]),
 ]);
 
