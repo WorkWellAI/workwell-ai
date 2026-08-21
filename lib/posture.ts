@@ -28,7 +28,7 @@ export type PostureMetrics = {
   hipsVisible: boolean;
 };
 
-export type AlertKind = "head" | "shoulder" | "sit" | "eyes" | "yawn";
+export type AlertKind = "head" | "shoulder" | "sit" | "eyes" | "yawn" | "fatigue";
 
 export type AlertEvent = {
   kind: AlertKind;

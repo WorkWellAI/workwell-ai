@@ -354,7 +354,8 @@ body {
 }
 
 .toast-eyes,
-.toast-yawn {
+.toast-yawn,
+.toast-fatigue {
   background: #121a2c;
   border-color: rgba(130, 170, 255, 0.5);
 }

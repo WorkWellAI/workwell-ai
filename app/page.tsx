@@ -20,7 +20,7 @@ export default function Home() {
 
       <p className="footnote">
         Webcam laptop chủ yếu thấy đầu–vai nên “lưng thẳng” chỉ ước lượng khi hông còn trong khung hình.
-        Cảnh báo mệt (mắt nhắm ~2 giây, ngáp ~1 giây) dùng Face Mesh trên máy — không phải chẩn đoán y khoa.
+        Cảnh báo mệt: mắt nhắm ~2 giây, ngáp, PERCLOS 60 giây, gật gù, kết hợp ngồi lâu — không phải chẩn đoán y khoa.
         Hãy hiệu chỉnh khi ngồi đúng tư thế, mắt mở.
       </p>
     </main>

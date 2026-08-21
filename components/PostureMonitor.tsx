@@ -20,9 +20,11 @@ import {
 import {
   analyzeFace,
   EYES_HOLD_MS,
+  SCORE_HOLD_MS,
   FACE_DOTS,
   FATIGUE_COPY,
   FatigueSession,
+  PERCLOS_WINDOW_MS,
   YAWN_HOLD_MS,
   type FatigueSnapshot,
 } from "@/lib/fatigue";
@@ -87,7 +89,8 @@ function statusColor(
     snapshot.shoulderHoldMs > holdMs * 0.4 ||
     (fatigue &&
       (fatigue.eyesHoldMs > EYES_HOLD_MS * 0.4 ||
-        fatigue.yawnHoldMs > YAWN_HOLD_MS * 0.4))
+        fatigue.yawnHoldMs > YAWN_HOLD_MS * 0.4 ||
+        fatigue.score >= 45))
   ) {
     return "#f0b429";
   }
@@ -175,19 +178,31 @@ export function PostureMonitor() {
         let faceLandmarks: Landmark[] = [];
         let fatigueSnap: FatigueSnapshot | null = null;
         const faceLm = faceLandmarkerRef.current;
+        let faceMetrics = {
+          present: false,
+          ear: 0,
+          mar: 0,
+          blink: -1,
+          jawOpen: -1,
+        };
         if (faceLm) {
           try {
             const face = faceLm.detectForVideo(v, ts);
             faceLandmarks = face.faceLandmarks[0] ?? [];
-            const faceMetrics = analyzeFace(
+            faceMetrics = analyzeFace(
               faceLandmarks,
               face.faceBlendshapes?.[0]?.categories,
             );
-            fatigueSnap = fatigueRef.current.step(faceMetrics);
           } catch {
             // Face model may skip a frame independently of pose.
           }
         }
+        fatigueSnap = fatigueRef.current.step(faceMetrics, {
+          bodyPresent: metrics.present,
+          sittingMs: next.sittingMs,
+          sitLimitMs: sessionRef.current.sitLimitMs,
+          neckAngle: metrics.neckAngle,
+        });
 
         const ctx = canvas.getContext("2d");
         if (ctx) {
@@ -256,6 +271,7 @@ export function PostureMonitor() {
     sessionRef.current = new PostureSession();
     sessionRef.current.sitLimitMs = sitPreset;
     fatigueRef.current = new FatigueSession();
+    fatigueRef.current.sitLimitMs = sitPreset;
 
     try {
       await attachStream(deviceIdRef.current || undefined);
@@ -341,6 +357,7 @@ export function PostureMonitor() {
 
   useEffect(() => {
     sessionRef.current.sitLimitMs = sitPreset;
+    fatigueRef.current.sitLimitMs = sitPreset;
   }, [sitPreset]);
 
   const present = snapshot?.metrics.present ?? false;
@@ -357,6 +374,13 @@ export function PostureMonitor() {
   const yawnPct = Math.min(
     100,
     ((fatigue?.yawnHoldMs ?? 0) / YAWN_HOLD_MS) * 100,
+  );
+  const scorePct = Math.min(100, fatigue?.score ?? 0);
+  const perclosPct = Math.min(100, (fatigue?.perclos ?? 0) * 100);
+  const nodPct = Math.min(100, ((fatigue?.nods2min ?? 0) / 3) * 100);
+  const scoreHoldPct = Math.min(
+    100,
+    ((fatigue?.scoreHoldMs ?? 0) / SCORE_HOLD_MS) * 100,
   );
 
   return (
@@ -380,7 +404,7 @@ export function PostureMonitor() {
                   <h2>Bật webcam để theo dõi dáng ngồi</h2>
                   <p>
                     MediaPipe chạy trên trình duyệt. Cảnh báo dáng ngồi và dấu
-                    hiệu mệt (mắt nhắm, ngáp).
+                    hiệu mệt (mắt nhắm, ngáp, PERCLOS, gật gù).
                   </p>
                 </>
               )}
@@ -470,10 +494,10 @@ export function PostureMonitor() {
       </section>
 
       <aside className="panel">
-        <h2>Tín hiệu tư thế</h2>
+        <h2>Tín hiệu tư thế &amp; mệt</h2>
         <p className="muted">
           {snapshot?.calibrated || fatigue?.calibrated
-            ? "Đã hiệu chỉnh tư thế / mắt. Cảnh báo mệt khi nhắm mắt ~2 giây hoặc ngáp."
+            ? "Đã hiệu chỉnh tư thế / mắt. Điểm mệt gồm PERCLOS 60s, ngáp, gật gù và ngồi lâu."
             : "Chưa hiệu chỉnh — dùng ngưỡng mặc định. Nên bấm hiệu chỉnh khi ngồi thẳng, mắt mở."}
         </p>
 
@@ -505,6 +529,33 @@ export function PostureMonitor() {
           value={formatDuration(snapshot?.sittingMs ?? 0)}
           pct={sitPct}
           warn={sitPct > 70}
+        />
+        <Metric
+          label="Điểm mệt"
+          hint={FATIGUE_COPY.fatigue.hint}
+          value={fatigue ? `${fatigue.score}/100` : "—"}
+          pct={Math.max(scorePct, scoreHoldPct)}
+          warn={(fatigue?.score ?? 0) >= 45}
+        />
+        <Metric
+          label={`PERCLOS (${Math.round(PERCLOS_WINDOW_MS / 1000)}s)`}
+          hint="Tỷ lệ thời gian mắt nhắm trong 60 giây gần nhất. Cần ~15 giây dữ liệu mặt."
+          value={
+            !faceReady
+              ? "chưa tải model mặt"
+              : fatigue && fatigue.perclos > 0
+                ? `${Math.round(fatigue.perclos * 100)}%`
+                : "đang lấy mẫu"
+          }
+          pct={perclosPct}
+          warn={perclosPct >= 8}
+        />
+        <Metric
+          label="Gật gù / 2 phút"
+          hint="Cúi đầu rồi ngẩng lại trong ~2 giây. Khác với cúi làm việc liên tục."
+          value={fatigue ? `${fatigue.nods2min} lần` : "—"}
+          pct={nodPct}
+          warn={nodPct >= 50}
         />
         <Metric
           label="Mắt (mệt)"
@@ -549,7 +600,9 @@ export function PostureMonitor() {
 
         <h3>Cảnh báo gần đây</h3>
         {alerts.length === 0 ? (
-          <p className="muted">Chưa có cảnh báo. Cúi/vai ~7 giây; mắt nhắm ~2 giây; ngáp ~1 giây.</p>
+          <p className="muted">
+            Chưa có cảnh báo. Mắt ~2s, ngáp ~1s, điểm mệt ≥55 giữ ~8s (PERCLOS 60s + ngáp + gật + ngồi lâu).
+          </p>
         ) : (
           <ul className="log">
             {alerts.map((a) => (
