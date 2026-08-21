@@ -104,7 +104,7 @@ body {
   overflow: hidden;
   border-radius: 16px;
   background: #08110d;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 4 / 3;
 }
 
 .viewport video,
@@ -113,7 +113,13 @@ body {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: #08110d;
+}
+
+.viewport.mirror video,
+.viewport.mirror canvas {
   transform: scaleX(-1);
 }
 
@@ -151,7 +157,8 @@ body {
 }
 
 .live-pill,
-.calib-banner {
+.calib-banner,
+.cam-switch {
   position: absolute;
   left: 14px;
   top: 14px;
@@ -163,6 +170,19 @@ body {
   border-radius: 999px;
   padding: 6px 12px;
   font-size: 0.82rem;
+}
+
+.cam-switch {
+  left: auto;
+  right: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  min-height: 36px;
+}
+
+.cam-switch:disabled {
+  opacity: 0.55;
 }
 
 .live-pill i {
@@ -279,6 +299,10 @@ body {
   color: var(--muted);
 }
 
+.camera-field {
+  margin-top: 12px;
+}
+
 .field select {
   font: inherit;
   color: var(--ink);
@@ -336,14 +360,49 @@ body {
 }
 
 @media (max-width: 880px) {
+  .shell {
+    width: 100%;
+    padding: 12px max(12px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+
   .hero,
   .monitor {
     grid-template-columns: 1fr;
     display: grid;
   }
 
+  .hero {
+    margin-bottom: 12px;
+    align-items: start;
+  }
+
   .privacy {
     text-align: left;
     max-width: none;
+  }
+
+  .stage,
+  .panel {
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .viewport {
+    aspect-ratio: 3 / 4;
+    min-height: 62dvh;
+    max-height: 78dvh;
+    height: 62dvh;
+  }
+
+  .overlay-msg {
+    padding: 20px;
+  }
+
+  .overlay-msg h2 {
+    font-size: 1.25rem;
+  }
+
+  .btn {
+    min-height: 44px;
   }
 }

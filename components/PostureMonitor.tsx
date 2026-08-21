@@ -11,7 +11,14 @@ import {
   type Landmark,
   type SessionSnapshot,
 } from "@/lib/posture";
-import { createPoseLandmarker } from "@/lib/pose-landmarker";
+import { createPoseLandmarker, type PoseLandmarkerHandle } from "@/lib/pose-landmarker";
+import {
+  cameraLabel,
+  listVideoInputs,
+  openCameraStream,
+  shouldMirror,
+  type CamDevice,
+} from "@/lib/cameras";
 
 type RunState = "idle" | "loading" | "running" | "denied" | "error";
 
@@ -70,6 +77,9 @@ export function PostureMonitor() {
   const rafRef = useRef(0);
   const lastTsRef = useRef(-1);
   const lastUiRef = useRef(0);
+  const landmarkerRef = useRef<PoseLandmarkerHandle | null>(null);
+  const loopStartedRef = useRef(false);
+  const deviceIdRef = useRef("");
 
   const [runState, setRunState] = useState<RunState>("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -78,17 +88,101 @@ export function PostureMonitor() {
   const [banner, setBanner] = useState<AlertEvent | null>(null);
   const [sitPreset, setSitPreset] = useState(SIT_PRESETS[0].ms);
   const [calibrating, setCalibrating] = useState(false);
+  const [cameras, setCameras] = useState<CamDevice[]>([]);
+  const [deviceId, setDeviceId] = useState("");
+  const [mirrored, setMirrored] = useState(true);
+  const [switching, setSwitching] = useState(false);
 
-  const stopCamera = useCallback(() => {
-    cancelAnimationFrame(rafRef.current);
+  const stopTracks = useCallback(() => {
     const stream = videoRef.current?.srcObject as MediaStream | null;
     stream?.getTracks().forEach((t) => t.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
+  const startLoop = useCallback(() => {
+    if (loopStartedRef.current) return;
+    loopStartedRef.current = true;
+
+    const loop = () => {
+      rafRef.current = requestAnimationFrame(loop);
+      const v = videoRef.current;
+      const canvas = canvasRef.current;
+      const landmarker = landmarkerRef.current;
+      if (!v || !canvas || !landmarker || v.readyState < 2) return;
+
+      if (canvas.width !== v.videoWidth || canvas.height !== v.videoHeight) {
+        canvas.width = v.videoWidth;
+        canvas.height = v.videoHeight;
+      }
+
+      let ts = performance.now();
+      if (ts <= lastTsRef.current) ts = lastTsRef.current + 1;
+      lastTsRef.current = ts;
+
+      try {
+        const result = landmarker.detectForVideo(v, ts);
+        const landmarks = result.landmarks[0] ?? [];
+        const metrics = analyzePosture(landmarks);
+        const next = sessionRef.current.step(metrics);
+        setCalibrating(sessionRef.current.isCalibrating);
+
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          if (landmarks.length) {
+            drawPose(ctx, landmarks, statusColor(next, HOLD_MS));
+          }
+        }
+
+        const now = Date.now();
+        if (now - lastUiRef.current > 120) {
+          lastUiRef.current = now;
+          setSnapshot({ ...next });
+        }
+
+        if (next.alert) {
+          setBanner(next.alert);
+          setAlerts((prev) => [next.alert!, ...prev].slice(0, 8));
+        }
+      } catch {
+        // Skip a dropped frame (timestamp or WASM hiccup).
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+  }, []);
+
+  const attachStream = useCallback(
+    async (nextDeviceId?: string) => {
+      const video = videoRef.current;
+      if (!video) throw new Error("Không tìm thấy thẻ video.");
+      stopTracks();
+      const stream = await openCameraStream(nextDeviceId || undefined);
+      video.setAttribute("playsinline", "true");
+      video.srcObject = stream;
+      await video.play();
+
+      const list = await listVideoInputs();
+      setCameras(list);
+      const track = stream.getVideoTracks()[0];
+      const activeId = track?.getSettings().deviceId || nextDeviceId || "";
+      deviceIdRef.current = activeId;
+      setDeviceId(activeId);
+      setMirrored(track ? shouldMirror(track, list) : true);
+    },
+    [stopTracks],
+  );
+
+  const stopCamera = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
+    loopStartedRef.current = false;
     lastTsRef.current = -1;
+    stopTracks();
     setRunState("idle");
     setSnapshot(null);
     setCalibrating(false);
-  }, []);
+    setSwitching(false);
+  }, [stopTracks]);
 
   const startCamera = useCallback(async () => {
     setErrorMsg("");
@@ -97,68 +191,14 @@ export function PostureMonitor() {
     sessionRef.current.sitLimitMs = sitPreset;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-      const video = videoRef.current;
-      if (!video) throw new Error("Không tìm thấy thẻ video.");
-      video.srcObject = stream;
-      await video.play();
-
-      const landmarker = await createPoseLandmarker();
+      await attachStream(deviceIdRef.current || undefined);
+      if (!landmarkerRef.current) {
+        landmarkerRef.current = await createPoseLandmarker();
+      }
+      startLoop();
       setRunState("running");
-
-      const loop = () => {
-        rafRef.current = requestAnimationFrame(loop);
-        const v = videoRef.current;
-        const canvas = canvasRef.current;
-        if (!v || !canvas || v.readyState < 2) return;
-
-        if (canvas.width !== v.videoWidth || canvas.height !== v.videoHeight) {
-          canvas.width = v.videoWidth;
-          canvas.height = v.videoHeight;
-        }
-
-        let ts = performance.now();
-        if (ts <= lastTsRef.current) ts = lastTsRef.current + 1;
-        lastTsRef.current = ts;
-
-        try {
-          const result = landmarker.detectForVideo(v, ts);
-          const landmarks = result.landmarks[0] ?? [];
-          const metrics = analyzePosture(landmarks);
-          const next = sessionRef.current.step(metrics);
-          setCalibrating(sessionRef.current.isCalibrating);
-
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            if (landmarks.length) {
-              drawPose(ctx, landmarks, statusColor(next, HOLD_MS));
-            }
-          }
-
-          const now = Date.now();
-          if (now - lastUiRef.current > 120) {
-            lastUiRef.current = now;
-            setSnapshot({ ...next });
-          }
-
-          if (next.alert) {
-            setBanner(next.alert);
-            setAlerts((prev) => [next.alert!, ...prev].slice(0, 8));
-          }
-        } catch {
-          // Skip a dropped frame (timestamp or WASM hiccup).
-        }
-      };
-
-      rafRef.current = requestAnimationFrame(loop);
     } catch (err) {
-      const leaked = videoRef.current?.srcObject as MediaStream | null;
-      leaked?.getTracks().forEach((t) => t.stop());
-      if (videoRef.current) videoRef.current.srcObject = null;
+      stopTracks();
       const name = err instanceof DOMException ? err.name : "";
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
         setRunState("denied");
@@ -170,14 +210,47 @@ export function PostureMonitor() {
         );
       }
     }
-  }, [sitPreset]);
+  }, [attachStream, sitPreset, startLoop, stopTracks]);
+
+  const switchCamera = useCallback(
+    async (nextId: string) => {
+      if (!nextId || nextId === deviceIdRef.current) return;
+      if (!loopStartedRef.current) {
+        deviceIdRef.current = nextId;
+        setDeviceId(nextId);
+        return;
+      }
+      setSwitching(true);
+      setErrorMsg("");
+      try {
+        await attachStream(nextId);
+      } catch (err) {
+        setErrorMsg(
+          err instanceof Error ? err.message : "Không đổi được camera.",
+        );
+      } finally {
+        setSwitching(false);
+      }
+    },
+    [attachStream],
+  );
+
+  const cycleCamera = useCallback(() => {
+    if (cameras.length < 2) return;
+    const idx = cameras.findIndex((c) => c.deviceId === deviceId);
+    const next = cameras[(idx + 1) % cameras.length];
+    void switchCamera(next.deviceId);
+  }, [cameras, deviceId, switchCamera]);
 
   useEffect(() => {
     const video = videoRef.current;
     return () => {
       cancelAnimationFrame(rafRef.current);
+      loopStartedRef.current = false;
       const stream = video?.srcObject as MediaStream | null;
       stream?.getTracks().forEach((t) => t.stop());
+      landmarkerRef.current?.close();
+      landmarkerRef.current = null;
     };
   }, []);
 
@@ -209,7 +282,7 @@ export function PostureMonitor() {
       )}
 
       <section className="stage">
-        <div className="viewport">
+        <div className={`viewport ${mirrored ? "mirror" : ""}`}>
           <video ref={videoRef} playsInline muted autoPlay />
           <canvas ref={canvasRef} />
           {runState !== "running" && (
@@ -233,6 +306,16 @@ export function PostureMonitor() {
             <div className="live-pill">
               <i /> {present ? "Đang theo dõi" : "Không thấy người"}
             </div>
+          )}
+          {runState === "running" && cameras.length > 1 && (
+            <button
+              className="cam-switch"
+              onClick={cycleCamera}
+              disabled={switching}
+              type="button"
+            >
+              {switching ? "Đang đổi…" : "Đổi camera"}
+            </button>
           )}
           {calibrating && (
             <div className="calib-banner">Ngồi thẳng, nhìn màn hình — đang lấy tư thế chuẩn…</div>
@@ -273,6 +356,25 @@ export function PostureMonitor() {
             Tôi đã nghỉ
           </button>
         </div>
+        {cameras.length > 1 && (
+          <label className="field camera-field">
+            Camera
+            <select
+              value={deviceId}
+              disabled={runState === "loading" || switching}
+              onChange={(e) => void switchCamera(e.target.value)}
+            >
+              {cameras.map((cam, i) => (
+                <option key={cam.deviceId} value={cam.deviceId}>
+                  {cameraLabel(cam, i)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {errorMsg && runState === "running" && (
+          <p className="muted">{errorMsg}</p>
+        )}
       </section>
 
       <aside className="panel">
