@@ -30,5 +30,10 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "lib/posture.check.ts", "lib/fatigue.check.ts"]
+  "exclude": [
+    "node_modules",
+    "lib/posture.check.ts",
+    "lib/fatigue.check.ts",
+    "lib/coach.check.ts"
+  ]
 }

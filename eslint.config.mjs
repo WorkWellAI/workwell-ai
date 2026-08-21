@@ -23,6 +23,7 @@ const eslintConfig = defineConfig([
     "public/mediapipe-bridge.js",
     "lib/posture.check.ts",
     "lib/fatigue.check.ts",
+    "lib/coach.check.ts",
   ]),
 ]);
 

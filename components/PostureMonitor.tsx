@@ -35,6 +35,12 @@ import {
   shouldMirror,
   type CamDevice,
 } from "@/lib/cameras";
+import {
+  EMPTY_ALERT_COUNTS,
+  EMPTY_COACH_STATS,
+  type CoachStats,
+} from "@/lib/coach";
+import { CoachPanel } from "@/components/CoachPanel";
 
 type RunState = "idle" | "loading" | "running" | "denied" | "error";
 
@@ -139,6 +145,8 @@ export function PostureMonitor() {
   const [switching, setSwitching] = useState(false);
   const [fatigue, setFatigue] = useState<FatigueSnapshot | null>(null);
   const [faceReady, setFaceReady] = useState(false);
+  const [alertCounts, setAlertCounts] = useState({ ...EMPTY_ALERT_COUNTS });
+  const [sessionKey, setSessionKey] = useState(0);
 
   const stopTracks = useCallback(() => {
     const stream = videoRef.current?.srcObject as MediaStream | null;
@@ -223,6 +231,10 @@ export function PostureMonitor() {
         if (alert) {
           setBanner(alert);
           setAlerts((prev) => [alert, ...prev].slice(0, 8));
+          setAlertCounts((prev) => ({
+            ...prev,
+            [alert.kind]: prev[alert.kind] + 1,
+          }));
         }
       } catch {
         // Skip a dropped frame (timestamp or WASM hiccup).
@@ -259,8 +271,6 @@ export function PostureMonitor() {
     lastTsRef.current = -1;
     stopTracks();
     setRunState("idle");
-    setSnapshot(null);
-    setFatigue(null);
     setCalibrating(false);
     setSwitching(false);
   }, [stopTracks]);
@@ -272,6 +282,11 @@ export function PostureMonitor() {
     sessionRef.current.sitLimitMs = sitPreset;
     fatigueRef.current = new FatigueSession();
     fatigueRef.current.sitLimitMs = sitPreset;
+    setSnapshot(null);
+    setFatigue(null);
+    setAlertCounts({ ...EMPTY_ALERT_COUNTS });
+    setAlerts([]);
+    setBanner(null);
 
     try {
       await attachStream(deviceIdRef.current || undefined);
@@ -290,6 +305,7 @@ export function PostureMonitor() {
       }
       startLoop();
       setRunState("running");
+      setSessionKey((k) => k + 1);
     } catch (err) {
       stopTracks();
       const name = err instanceof DOMException ? err.name : "";
@@ -383,8 +399,36 @@ export function PostureMonitor() {
     ((fatigue?.scoreHoldMs ?? 0) / SCORE_HOLD_MS) * 100,
   );
 
+  const coachStats: CoachStats = snapshot
+    ? {
+        running: runState === "running",
+        bodyPresent: snapshot.metrics.present,
+        facePresent: fatigue?.metrics.present ?? false,
+        faceReady,
+        calibrated: snapshot.calibrated || (fatigue?.calibrated ?? false),
+        sittingMs: snapshot.sittingMs,
+        sitLimitMs: sitPreset,
+        neckAngle: snapshot.metrics.neckAngle,
+        shoulderTilt: snapshot.metrics.shoulderTilt,
+        headHoldMs: snapshot.headHoldMs,
+        shoulderHoldMs: snapshot.shoulderHoldMs,
+        perclos: fatigue?.perclos ?? 0,
+        yawns10min: fatigue?.yawns10min ?? 0,
+        nods2min: fatigue?.nods2min ?? 0,
+        fatigueScore: fatigue?.score ?? 0,
+        alertCounts,
+      }
+    : {
+        ...EMPTY_COACH_STATS,
+        running: runState === "running",
+        faceReady,
+        alertCounts,
+        sitLimitMs: sitPreset,
+      };
+
   return (
-    <div className="monitor">
+    <div className="workspace">
+      <div className="monitor">
       {banner && (
         <div className={`toast toast-${banner.kind}`} role="alert">
           <strong>{banner.title}</strong>
@@ -403,8 +447,8 @@ export function PostureMonitor() {
                   <p className="kicker">Camera local · không gửi video</p>
                   <h2>Bật webcam để theo dõi dáng ngồi</h2>
                   <p>
-                    MediaPipe chạy trên trình duyệt. Cảnh báo dáng ngồi và dấu
-                    hiệu mệt (mắt nhắm, ngáp, PERCLOS, gật gù).
+                    MediaPipe chạy trên trình duyệt. Cảnh báo dáng ngồi, dấu
+                    hiệu mệt, và Coach giải thích từ số liệu (không xem video).
                   </p>
                 </>
               )}
@@ -614,6 +658,8 @@ export function PostureMonitor() {
           </ul>
         )}
       </aside>
+      </div>
+      <CoachPanel stats={coachStats} sessionKey={sessionKey} />
     </div>
   );
 }

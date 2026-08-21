@@ -83,6 +83,11 @@ body {
   text-align: right;
 }
 
+.workspace {
+  display: grid;
+  gap: 20px;
+}
+
 .monitor {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
@@ -360,6 +365,144 @@ body {
   border-color: rgba(130, 170, 255, 0.5);
 }
 
+.coach {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 16px;
+  backdrop-filter: blur(16px);
+}
+
+.coach-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.coach-head h2 {
+  margin: 0 0 4px;
+  letter-spacing: -0.03em;
+}
+
+.wellness {
+  display: grid;
+  justify-items: end;
+  min-width: 72px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.wellness strong {
+  color: var(--accent);
+  font-size: 1.45rem;
+  letter-spacing: -0.04em;
+}
+
+.wellness.low strong {
+  color: var(--warn);
+}
+
+.coach-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+
+.coach-insight,
+.coach-chat {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.coach-headline {
+  margin: 0 0 10px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.coach-insight ul {
+  margin: 12px 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.coach-insight li + li {
+  margin-top: 6px;
+}
+
+.coach-actions {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+}
+
+.coach-msgs {
+  max-height: 260px;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.coach-msg {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+}
+
+.coach-msg.coach {
+  background: rgba(124, 184, 160, 0.1);
+  border: 1px solid var(--line);
+}
+
+.coach-msg.user {
+  background: rgba(198, 232, 122, 0.12);
+  justify-self: end;
+  max-width: 92%;
+}
+
+.coach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+}
+
+.coach-form {
+  display: flex;
+  gap: 8px;
+}
+
+.coach-form input {
+  flex: 1;
+  font: inherit;
+  color: var(--ink);
+  background: #102018;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 14px;
+}
+
 .footnote {
   margin-top: 18px;
   color: var(--muted);
@@ -373,7 +516,8 @@ body {
   }
 
   .hero,
-  .monitor {
+  .monitor,
+  .coach-grid {
     grid-template-columns: 1fr;
     display: grid;
   }

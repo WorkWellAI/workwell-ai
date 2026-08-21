@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "WorkWell AI — Cảnh báo dáng ngồi",
+  title: "WorkWell AI — Dáng ngồi, mệt mỏi & Coach",
   description:
-    "Theo dõi tư thế ngồi bằng camera trên máy, cảnh báo khi cúi đầu, vai lệch hoặc ngồi quá lâu.",
+    "Theo dõi tư thế và dấu hiệu mệt trên máy, Coach giải thích từ số liệu — không gửi video, không chẩn đoán y khoa.",
 };
 
 export const viewport: Viewport = {
